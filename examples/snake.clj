@@ -1,4 +1,4 @@
-; Inspired by the snakes the have gone before:
+; Inspired by the snakes that have gone before:
 ; Abhishek Reddy's snake: http://www.plt1.com/1070/even-smaller-snake/
 ; Mark Volkmann's snake: http://www.ociweb.com/mark/programming/ClojureSnake.html 
 
@@ -29,16 +29,12 @@
 	    VK_DOWN  [ 0  1]})
 
 ; apple
-(def *apple* (ref nil))
-
 (defn create-apple [] 
   {:location [(rand-int width) (rand-int height)]
    :color (Color. 210 50 90)
    :type :apple}) 
 
 ; snake
-(def *snake* (ref nil))
-
 (defn create-snake []
   {:body (list [1 1]) 
    :dir [1 0]
@@ -58,29 +54,38 @@
 
 (defn head-overlaps-body? [{[head & body] :body}]
   ; have proposed to SS that argument order be reversed:
-  (includes? head body))
+  (includes? body head))
 
 (def lose? head-overlaps-body?)
 
 (defn collision? [{[snake-head] :body} {apple :location}]
    (= snake-head apple))
 
-; state updates
-(defn update-positions [snake apple]
+; game state updates
+(defn create-game []
+  {:type :game
+   :apple (ref nil)
+   :snake (ref nil)})
+
+(defn handle-timer [{:keys [snake apple]}]
   (dosync
    (if (collision? @snake @apple)
      (do (ref-set apple (create-apple))
 	 (alter snake move :grow))
      (alter snake move))))
 
-(defn update-direction [snake newdir]
-  (dosync (alter snake turn newdir)))
+(defn handle-keycode [{:keys [snake]} keycode]
+  (dosync (alter snake turn (dirs keycode))))
 
-(defn reset-game []
-  (dosync (ref-set *apple* (create-apple))
-	  (ref-set *snake* (create-snake))))
+(defn reset-game [{:keys [apple snake]}]
+  (dosync
+    (ref-set apple (create-apple))
+    (ref-set snake (create-snake))))
 
-(reset-game)
+(defn end-game? [{:keys [apple snake]}]
+  (cond
+    (lose? snake) (do (reset-game) "You lose!")
+    (win? snake)  (do (reset-game) "You win!")))
 
 ; drawing
 (defn fill-point [g pt color] 
@@ -96,40 +101,39 @@
 
 (defmethod paint :apple [g {:keys [location color]}]
   (fill-point g location color))
- 
-; gui elements
-(def frame (JFrame. "Snake"))
 
-(def panel 
-  (proxy [JPanel ActionListener KeyListener] []
-    (paintComponent [g] 
-      (proxy-super paintComponent g)
-      (paint g @*snake*)
-      (paint g @*apple*))
-    (actionPerformed [e]
-      (update-positions *snake* *apple*)
-      (when (lose? @*snake*)
-	(reset-game)
-	(JOptionPane/showMessageDialog frame "You lose!"))
-      (when (win? @*snake*)
-	(reset-game)
-	(JOptionPane/showMessageDialog frame "You win!"))
-      (.repaint this))
-    (keyPressed [e] 
-      (update-direction *snake* (dirs (.getKeyCode e))))
-    (keyReleased [e])
-    (keyTyped [e])))
+(defmethod paint :game [g {:keys [apple snake]}]
+  (paint g @apple)
+  (paint g @snake))
 
-(def timer (Timer. turn-millis panel))
- 
-(doto panel 
-  (.setFocusable true)
-  (.addKeyListener panel))
+; main function
+(defn run-game [game]
+  (let [frame (JFrame. "Snake")
+        panel (proxy [JPanel ActionListener KeyListener] []
+                (paintComponent [g]
+                  (proxy-super paintComponent g)
+                  (paint g game))
+                (actionPerformed [e]
+                  (handle-timer game)
+                  (when-let [msg (end-game? game)]
+                    (JOptionPane/showMessageDialog frame msg))
+                  (.repaint this))
+                (keyPressed [e]
+                   (handle-keycode game (.getKeyCode e)))
+                (keyReleased [e])
+                (keyTyped [e]))]
 
-(doto frame
-  (.add panel)
-  (.setSize (* width point-size) (* height point-size))
-  (.setVisible true))
-(.start timer)
+    (reset-game game)
 
+    (doto panel
+      (.setFocusable true)
+      (.addKeyListener panel))
 
+    (doto frame
+      (.add panel)
+      (.setSize (* width point-size) (* height point-size))
+      (.setVisible true))
+
+    (.start (Timer. turn-millis panel))))
+
+(run-game (create-game))
