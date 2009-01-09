@@ -7,15 +7,14 @@
 ; http://github.com/stuarthalloway/programming-clojure/tree/master/examples/snake.clj
 (ns examples.snake
   (:import (java.awt Color Graphics2D Component Image)
-           (javax.swing JPanel JFrame Timer JOptionPane)
-           (java.awt.event ActionListener KeyListener KeyEvent FocusListener))
+           (javax.swing JOptionPane)
+           (java.awt.event KeyListener KeyEvent))
   (:gen-class
      :extends java.applet.Applet
-     ;:exposes-methods {paint applet-paint}
      :state game
      :init init-snake)
   (:use clojure.contrib.import-static
-	[clojure.contrib.seq-utils :only (includes?)]))
+        [clojure.contrib.seq-utils :only (includes?)]))
 (import-static java.awt.event.KeyEvent VK_LEFT VK_RIGHT VK_UP VK_DOWN)
 
 (set! *warn-on-reflection* true)
@@ -99,7 +98,7 @@
         px-height (* height point-size)
         img (.createImage c px-width px-height)
         gfx (.getGraphics img)]
-    (.setColor gfx Color/WHITE)
+    (.setColor gfx Color/BLACK)
     (.fillRect gfx 0 0 px-width px-height)
     img))
 
@@ -121,35 +120,38 @@
   (paint g apple)
   (paint g snake))
 
-; applet methods
-(defn -init-snake []
-  [[] (ref (fresh-game nil))])
 
-(defn -update [#^examples.snake applet #^Graphics2D g]
+; applet-specific and stateful stuff
+(defn -init-snake []
+  [[] (atom (fresh-game nil))])
+
+(defn -paint [#^examples.snake applet #^Graphics2D g]
   (let [img #^Image (blank-screen applet)]
     (paint (.getGraphics img) @(.game applet))
     (.drawImage g img 0 0 applet)))
 
+(defn -update [applet g]
+  (-paint applet g))
+
 (defn -start [#^examples.snake applet]
-  (paint (.getGraphics applet) @(.game applet))
-  (.update applet (.getGraphics applet))
   (.repaint applet))
 
+(defn frame-action [_ #^examples.snake applet]
+  (when (.hasFocus applet)
+    (swap! (.game applet) next-frame)
+    (when-let [msg (:msg @(.game applet))]
+      (JOptionPane/showMessageDialog applet msg))
+    (.repaint applet)))
+
 (defn -init [#^examples.snake applet]
-  (let [timer (Timer. turn-millis
-                      (proxy [ActionListener] []
-                        (actionPerformed [e]
-                          (dosync (alter (.game applet) next-frame))
-                          (when-let [msg (:msg @(.game applet))]
-                            (JOptionPane/showMessageDialog nil msg))
-                          (.repaint applet))))]
-    (.addKeyListener applet
-      (proxy [KeyListener] []
-        (keyReleased [e])
-        (keyTyped [e])
-        (keyPressed [#^KeyEvent e]
-          (dosync (alter (.game applet) handle-keycode (.getKeyCode e))))))
-    (.addFocusListener applet
-       (proxy [FocusListener] []
-         (focusGained [e] (.start timer))
-         (focusLost [e] (.stop timer))))))
+  (send-off (agent nil)
+            (fn timer [_]
+              (Thread/sleep turn-millis)
+              (send-off (agent nil) frame-action applet)
+              (send-off *agent* timer)))
+  (.addKeyListener applet
+    (proxy [KeyListener] []
+      (keyReleased [e])
+      (keyTyped [e])
+      (keyPressed [#^KeyEvent e]
+        (swap! (.game applet) handle-keycode (.getKeyCode e))))))
