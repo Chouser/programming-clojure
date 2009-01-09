@@ -1,14 +1,24 @@
+; Chouser's applet snake
+
 ; Inspired by the snakes that have gone before:
 ; Abhishek Reddy's snake: http://www.plt1.com/1070/even-smaller-snake/
-; Mark Volkmann's snake: http://www.ociweb.com/mark/programming/ClojureSnake.html 
+; Mark Volkmann's snake: http://www.ociweb.com/mark/programming/ClojureSnake.html
+; Stuart Holloway's snake:
+; http://github.com/stuarthalloway/programming-clojure/tree/master/examples/snake.clj
 (ns examples.snake
-  (:gen-class :extends java.applet.Applet :main true)
-  (:import (java.awt Color Graphics2D Container)
+  (:import (java.awt Color Graphics2D Component Image)
            (javax.swing JPanel JFrame Timer JOptionPane)
-           (java.awt.event ActionListener KeyListener KeyEvent))
+           (java.awt.event ActionListener KeyListener KeyEvent FocusListener))
+  (:gen-class
+     :extends java.applet.Applet
+     ;:exposes-methods {paint applet-paint}
+     :state game
+     :init init-snake)
   (:use clojure.contrib.import-static
 	[clojure.contrib.seq-utils :only (includes?)]))
 (import-static java.awt.event.KeyEvent VK_LEFT VK_RIGHT VK_UP VK_DOWN)
+
+(set! *warn-on-reflection* true)
 
 ; Game board and coordinates. points are [x,y] vectors 
 (def width 75)
@@ -84,9 +94,14 @@
   (assoc game :snake (turn snake (dirs keycode))))
 
 ; drawing
-(defn clear-screen [#^Graphics2D g]
-  (.setColor g Color/WHITE)
-  (.fillRect g 0 0 (* width point-size) (* height point-size)))
+(defn blank-screen [#^Component c]
+  (let [px-width (* width point-size)
+        px-height (* height point-size)
+        img (.createImage c px-width px-height)
+        gfx (.getGraphics img)]
+    (.setColor gfx Color/WHITE)
+    (.fillRect gfx 0 0 px-width px-height)
+    img))
 
 (defn fill-point [#^Graphics2D g pt color] 
   (let [[x y width height] (point-to-screen-rect pt)]
@@ -106,38 +121,35 @@
   (paint g apple)
   (paint g snake))
 
-; main function
-(defn run-game [#^Container parent]
-  (let [game (ref (fresh-game nil))
-        panel (proxy [JPanel ActionListener KeyListener] []
-                (paintComponent [g]
-                  (clear-screen g)
-                  (when-let [msg (:msg @game)]
-                    (JOptionPane/showMessageDialog parent msg))
-                  (paint g @game))
-                (keyPressed [#^KeyEvent e]
-                  (dosync (alter game handle-keycode (.getKeyCode e))))
-                (keyReleased [e])
-                (keyTyped [e])
-                (actionPerformed [e]
-                  (dosync (alter game next-frame))
-                  (.repaint #^JPanel this)))]
+; applet methods
+(defn -init-snake []
+  [[] (ref (fresh-game nil))])
 
-    (doto panel
-      (.setFocusable true)
-      (.addKeyListener panel))
+(defn -update [#^examples.snake applet #^Graphics2D g]
+  (let [img #^Image (blank-screen applet)]
+    (paint (.getGraphics img) @(.game applet))
+    (.drawImage g img 0 0 applet)))
 
-    (doto parent
-      (.add panel)
-      (.setSize (* width point-size) (* height point-size))
-      (.setVisible true))
+(defn -start [#^examples.snake applet]
+  (paint (.getGraphics applet) @(.game applet))
+  (.update applet (.getGraphics applet))
+  (.repaint applet))
 
-    (.start (Timer. turn-millis panel))))
-
-; run as an app
-(defn -main []
-  (run-game (JFrame. "Snake")))
-
-; run as an applet
-(defn -start [this]
-  (run-game this))
+(defn -init [#^examples.snake applet]
+  (let [timer (Timer. turn-millis
+                      (proxy [ActionListener] []
+                        (actionPerformed [e]
+                          (dosync (alter (.game applet) next-frame))
+                          (when-let [msg (:msg @(.game applet))]
+                            (JOptionPane/showMessageDialog nil msg))
+                          (.repaint applet))))]
+    (.addKeyListener applet
+      (proxy [KeyListener] []
+        (keyReleased [e])
+        (keyTyped [e])
+        (keyPressed [#^KeyEvent e]
+          (dosync (alter (.game applet) handle-keycode (.getKeyCode e))))))
+    (.addFocusListener applet
+       (proxy [FocusListener] []
+         (focusGained [e] (.start timer))
+         (focusLost [e] (.stop timer))))))
