@@ -1,10 +1,11 @@
 ; Inspired by the snakes that have gone before:
 ; Abhishek Reddy's snake: http://www.plt1.com/1070/even-smaller-snake/
 ; Mark Volkmann's snake: http://www.ociweb.com/mark/programming/ClojureSnake.html 
-
 (ns examples.snake
-  (:import (java.awt Color) (javax.swing JPanel JFrame Timer JOptionPane)
-           (java.awt.event ActionListener KeyListener))
+  (:gen-class :extends java.applet.Applet :main true)
+  (:import (java.awt Color Graphics2D Container)
+           (javax.swing JPanel JFrame Timer JOptionPane)
+           (java.awt.event ActionListener KeyListener KeyEvent))
   (:use clojure.contrib.import-static
 	[clojure.contrib.seq-utils :only (includes?)]))
 (import-static java.awt.event.KeyEvent VK_LEFT VK_RIGHT VK_UP VK_DOWN)
@@ -54,7 +55,7 @@
 
 (defn head-overlaps-body? [{[head & body] :body}]
   ; have proposed to SS that argument order be reversed:
-  (includes? body head))
+  (includes? head body))
 
 (def lose? head-overlaps-body?)
 
@@ -62,33 +63,32 @@
    (= snake-head apple))
 
 ; game state updates
-(defn create-game []
+(defn fresh-game [msg]
   {:type :game
-   :apple (ref nil)
-   :snake (ref nil)})
+   :apple (create-apple)
+   :snake (create-snake)
+   :msg msg})
 
-(defn handle-timer [{:keys [snake apple]}]
-  (dosync
-   (if (collision? @snake @apple)
-     (do (ref-set apple (create-apple))
-	 (alter snake move :grow))
-     (alter snake move))))
-
-(defn handle-keycode [{:keys [snake]} keycode]
-  (dosync (alter snake turn (dirs keycode))))
-
-(defn reset-game [{:keys [apple snake]}]
-  (dosync
-    (ref-set apple (create-apple))
-    (ref-set snake (create-snake))))
-
-(defn end-game? [{:keys [apple snake]}]
+(defn next-frame [{:keys [snake apple] :as game}]
   (cond
-    (lose? snake) (do (reset-game) "You lose!")
-    (win? snake)  (do (reset-game) "You win!")))
+    (lose? snake) (fresh-game "You lose!")
+    (win? snake)  (fresh-game "You win!")
+    (collision? snake apple)
+      (assoc game
+             :msg   nil
+             :apple (create-apple)
+             :snake (move snake :grow))
+    :else (assoc game :msg nil :snake (move snake))))
+
+(defn handle-keycode [{:keys [snake] :as game} keycode]
+  (assoc game :snake (turn snake (dirs keycode))))
 
 ; drawing
-(defn fill-point [g pt color] 
+(defn clear-screen [#^Graphics2D g]
+  (.setColor g Color/WHITE)
+  (.fillRect g 0 0 (* width point-size) (* height point-size)))
+
+(defn fill-point [#^Graphics2D g pt color] 
   (let [[x y width height] (point-to-screen-rect pt)]
     (.setColor g color) 
     (.fillRect g x y width height)))
@@ -103,37 +103,41 @@
   (fill-point g location color))
 
 (defmethod paint :game [g {:keys [apple snake]}]
-  (paint g @apple)
-  (paint g @snake))
+  (paint g apple)
+  (paint g snake))
 
 ; main function
-(defn run-game [game]
-  (let [frame (JFrame. "Snake")
+(defn run-game [#^Container parent]
+  (let [game (ref (fresh-game nil))
         panel (proxy [JPanel ActionListener KeyListener] []
                 (paintComponent [g]
-                  (proxy-super paintComponent g)
-                  (paint g game))
-                (actionPerformed [e]
-                  (handle-timer game)
-                  (when-let [msg (end-game? game)]
-                    (JOptionPane/showMessageDialog frame msg))
-                  (.repaint this))
-                (keyPressed [e]
-                   (handle-keycode game (.getKeyCode e)))
+                  (clear-screen g)
+                  (when-let [msg (:msg @game)]
+                    (JOptionPane/showMessageDialog parent msg))
+                  (paint g @game))
+                (keyPressed [#^KeyEvent e]
+                  (dosync (alter game handle-keycode (.getKeyCode e))))
                 (keyReleased [e])
-                (keyTyped [e]))]
-
-    (reset-game game)
+                (keyTyped [e])
+                (actionPerformed [e]
+                  (dosync (alter game next-frame))
+                  (.repaint #^JPanel this)))]
 
     (doto panel
       (.setFocusable true)
       (.addKeyListener panel))
 
-    (doto frame
+    (doto parent
       (.add panel)
       (.setSize (* width point-size) (* height point-size))
       (.setVisible true))
 
     (.start (Timer. turn-millis panel))))
 
-(run-game (create-game))
+; run as an app
+(defn -main []
+  (run-game (JFrame. "Snake")))
+
+; run as an applet
+(defn -start [this]
+  (run-game this))
